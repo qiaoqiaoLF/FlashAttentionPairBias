@@ -68,14 +68,20 @@ def _attn_fwd_inner(acc, l_i, m_i, q,  #
     return acc, l_i, m_i
 
 
+# configs_fwd = [
+#     triton.Config({'BLOCK_M': BM, 'BLOCK_N': BN}, num_stages=s, num_warps=w) \
+#     for BM in [64, 128]\
+#     for BN in [32, 64]\
+#     for s in [3, 4, 5, 6, 7]\
+#     for w in [4, 8]\
+# ]
 configs_fwd = [
     triton.Config({'BLOCK_M': BM, 'BLOCK_N': BN}, num_stages=s, num_warps=w) \
-    for BM in [64, 128]\
-    for BN in [32, 64]\
-    for s in [3, 4, 5, 6, 7]\
-    for w in [4, 8]\
+    for BM in [64]\
+    for BN in [32]\
+    for s in [3]\
+    for w in [4]\
 ]
-
 
 def keep_fwd(conf):
     BLOCK_M = conf.kwargs["BLOCK_M"]
@@ -177,11 +183,17 @@ def _attn_fwd(Q, K, V, BIAS, sm_scale, M, Out,  #
     tl.store(O_block_ptr, acc.to(Out.type.element_ty))
     
 
+# configs_bwd_pre = [
+#     triton.Config({'BLOCK_M': BM}, num_stages=s, num_warps=w) \
+#     for BM in [64, 128]\
+#     for s in [3, 4, 5, 6, 7]\
+#     for w in [4, 8]\
+# ]
 configs_bwd_pre = [
     triton.Config({'BLOCK_M': BM}, num_stages=s, num_warps=w) \
-    for BM in [64, 128]\
-    for s in [3, 4, 5, 6, 7]\
-    for w in [4, 8]\
+    for BM in [64]\
+    for s in [3]\
+    for w in [4]\
 ]
 
 def keep_bwd_pre(conf):
@@ -209,14 +221,20 @@ def _attn_bwd_preprocess(O, DO,  #
     tl.store(Delta + off_hz * N_CTX + off_m, delta)
 
 
+# configs_bwd_dkdv = [
+#     triton.Config({'BLOCK_M1': BM1, 'BLOCK_N1': BN1}, num_stages=s, num_warps=w) \
+#     for BM1 in [32, 64]\
+#     for BN1 in [64, 128]\
+#     for s in [3, 4, 5, 6, 7]\
+#     for w in [4, 8]\
+# ]
 configs_bwd_dkdv = [
     triton.Config({'BLOCK_M1': BM1, 'BLOCK_N1': BN1}, num_stages=s, num_warps=w) \
-    for BM1 in [32, 64]\
-    for BN1 in [64, 128]\
-    for s in [3, 4, 5, 6, 7]\
-    for w in [4, 8]\
+    for BM1 in [32]\
+    for BN1 in [64]\
+    for s in [3]\
+    for w in [4]\
 ]
-
 
 def keep_bwd_dkdv(conf):
     BLOCK_M1 = conf.kwargs["BLOCK_M1"]
@@ -318,12 +336,19 @@ def _attn_bwd_dkdv(Q, K, V, BIAS, sm_scale,  #
     dk *= sm_scale
     tl.store(dk_ptrs, dk)
 
+# configs_bwd_dqdbias = [
+#     triton.Config({'BLOCK_M2': BM2, 'BLOCK_N2': BN2}, num_stages=s, num_warps=w) \
+#     for BM2 in [64, 128]\
+#     for BN2 in [32, 64]\
+#     for s in [3, 4, 5, 6, 7]\
+#     for w in [4, 8]\
+# ]
 configs_bwd_dqdbias = [
     triton.Config({'BLOCK_M2': BM2, 'BLOCK_N2': BN2}, num_stages=s, num_warps=w) \
-    for BM2 in [64, 128]\
-    for BN2 in [32, 64]\
-    for s in [3, 4, 5, 6, 7]\
-    for w in [4, 8]\
+    for BM2 in [64]\
+    for BN2 in [32]\
+    for s in [3]\
+    for w in [4]\
 ]
 
 def keep_bwd_dqdbias(conf):
@@ -532,7 +557,7 @@ def test_op(Z, H, N_CTX, HEAD_DIM):
     assert torch.allclose(ref_dk, tri_dk, atol=1e-2, rtol=0.0)
     assert torch.allclose(ref_dq, tri_dq, atol=1e-2, rtol=0.0)
     assert torch.allclose(ref_dbias, tri_dbias, atol=1e-2, rtol=0.0)
-
+    print("ALL TESTS PASSED")
 
 
 if __name__ == "__main__":
