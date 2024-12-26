@@ -16,7 +16,7 @@ Modified by: Lifeng Qiao 2024
 """
 
 import torch
-
+import time
 import triton
 import triton.language as tl
 
@@ -559,7 +559,67 @@ def test_op(Z, H, N_CTX, HEAD_DIM):
     assert torch.allclose(ref_dbias, tri_dbias, atol=1e-2, rtol=0.0)
     print("ALL TESTS PASSED")
 
+def benchmark_op(Z, H, N_CTX, HEAD_DIM, num_runs=10):
+    torch.manual_seed(20)
 
+    # Initialize tensors
+    q = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.bfloat16, device="cuda").normal_(mean=0.0, std=0.5).requires_grad_()
+    k = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.bfloat16, device="cuda").normal_(mean=0.0, std=0.5).requires_grad_()
+    v = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.bfloat16, device="cuda").normal_(mean=0.0, std=0.5).requires_grad_()
+    bias = torch.empty((Z, H, N_CTX, N_CTX), dtype=torch.bfloat16, device="cuda").normal_(mean=0.0, std=0.5).requires_grad_()
+    sm_scale = 1 / (HEAD_DIM ** 0.5)
+    dout = torch.randn_like(q)
+
+    # Warm-up for Triton
+    for _ in range(5):
+        tri_out = attention(q, k, v, bias, sm_scale)
+        tri_out.backward(dout)
+
+    # Triton implementation memory and time
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.synchronize()
+    start = time.time()
+    for _ in range(num_runs):
+        tri_out = attention(q, k, v, bias, sm_scale)
+        tri_out.backward(dout)
+    torch.cuda.synchronize()
+    triton_time = (time.time() - start) / num_runs
+    triton_peak_memory = torch.cuda.max_memory_allocated()
+
+    # Reset gradients
+    q.grad, k.grad, v.grad, bias.grad = None, None, None, None
+
+    # Warm-up for PyTorch
+    for _ in range(5):
+        p = torch.matmul(q, k.transpose(2, 3)) * sm_scale
+        p = p + bias
+        p = torch.softmax(p.float(), dim=-1).to(torch.bfloat16)
+        ref_out = torch.matmul(p, v)
+        ref_out.backward(dout)
+
+    # PyTorch implementation memory and time
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.synchronize()
+    start = time.time()
+    for _ in range(num_runs):
+        p = torch.matmul(q, k.transpose(2, 3)) * sm_scale
+        p = p + bias
+        p = torch.softmax(p.float(), dim=-1).to(torch.bfloat16)
+        ref_out = torch.matmul(p, v)
+        ref_out.backward(dout)
+    torch.cuda.synchronize()
+    pytorch_time = (time.time() - start) / num_runs
+    pytorch_peak_memory = torch.cuda.max_memory_allocated()
+
+    # Report results
+    print(f"Triton Time (Forward + Backward): {triton_time:.6f} seconds")
+    print(f"Triton Peak Memory: {triton_peak_memory / 1024 ** 2:.2f} MB")
+    print(f"PyTorch Time (Forward + Backward): {pytorch_time:.6f} seconds")
+    print(f"PyTorch Peak Memory: {pytorch_peak_memory / 1024 ** 2:.2f} MB")
+    print(f"Speedup: {pytorch_time / triton_time:.2f}x")
+    print(f"Memory Reduction: {pytorch_peak_memory / triton_peak_memory:.2f}x")
+    
 if __name__ == "__main__":
     # only works on post-Ampere GPUs right now
-    test_op(1, 2, 1024, 64)
+    test_op(8, 8, 1024, 64)
+    benchmark_op(8, 8, 1024, 64, num_runs=100)
